@@ -1,0 +1,125 @@
+---
+title: "Practical Machine Learning Project"
+author: "Shohei Narron"
+date: "June 13, 2016"
+output: html_document
+---
+#### Overview:
+This report aims to predict the level of how well a particular activity is carried out using "*quantified self*" data from the weight lifting exercise dataset provided by http://groupware.les.inf.puc-rio.br/har.  
+
+As perscribed by the Practical Machine Learning MOOC assignment page, the goal of this report is to predict the way in which each participant was instructed to conduct the exercised, based on a tiered classification of A through E.  
+
+From the assignment page:  
+"*The goal of your project is to predict the manner in which they did the exercise. This is the "classe" variable in the training set. You may use any of the other variables to predict with. You should create a report describing how you built your model, how you used cross validation, what you think the expected out of sample error is, and why you made the choices you did. You will also use your prediction model to predict 20 different test cases.*"
+
+#### Preliminaries:
+First, we load packages necessary to conduct machine learning and visualizations:
+```{r results='hide'}
+library(caret)
+library(ggplot2)
+library(rattle)
+library(rpart.plot)
+library(randomForest)
+```
+
+Then we set our seed for reproducibility:
+```{r}
+set.seed(32323)
+```
+
+#### Fetch data and turn into data frames:
+We then create dataframes for the raw training and testing sets and apply initial data cleansing. Note that all data cleansing and feature creation processes on the training set are also identically applied to the test sets:
+```{r}
+training <- data.frame(read.csv("https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv"))
+testing <- data.frame(read.csv("https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv"))
+
+# Ignore first eight header / metadata columns
+training <- training[,8:length(colnames(training))]
+testing <- testing[,8:length(colnames(testing))]
+```
+
+#### Data Cleansing:
+As many of the columns contain NA values, we will only retain columns where the portion of NA rows is below a certain, arbitrary threshold. The threshold I used here is 40% NAs or less:
+```{r}
+dropColNum <- c()
+for (i in 1:length(colnames(training))){if(sum(is.na(training[,i]))/19216 >= 0.4){dropColNum <- c(dropColNum,i)}}
+trainingNonNA <- training[,-dropColNum]
+testingNonNA <- testing[,-dropColNum]
+```
+
+There may also be many near-zero variance columns which do not provide much information gain, and therefore are not useful for prediction purposes. We identify these columns and exclude them from the training set here:
+```{r}
+trainingLevel2 <- nearZeroVar(trainingNonNA,saveMetrics=TRUE)
+trainingComponent <- trainingNonNA[,-which(trainingLevel2$nzv)]
+testingComponent <- testingNonNA[,-which(trainingLevel2$nzv)]
+```
+
+#### Partitioning:
+Partitioning our training dataset into 80% training and 20% testing using the createDataPartition() function:
+```{r}
+inTrain <- createDataPartition(trainingComponent$classe,p=0.8,list=FALSE)
+newTrain <- trainingComponent[inTrain,]
+newTest <- trainingComponent[-inTrain,]
+```
+
+
+#### Building a basic model:
+I selected three potential models; classification trees, random forest, and generalized boosted trees, based on their simplicity (for classification trees), generalizability (for random forests), and to verify the general increase in accuracy with boosting (for GBM):
+```{r}
+# Create a controler for cross validation
+objControl <- trainControl(method='cv', number=3, returnResamp='none', classProbs = TRUE)
+
+modFitClass <- rpart(classe~.,data=newTrain,method="class")
+modFitRF <- train(classe~., data=newTrain, method="rf", trControl=objControl)
+modFitGBM <- train(classe~., data=newTrain, method="gbm", verbose=FALSE, trControl=objControl)
+```
+
+##### Decision tree results:
+```{r}
+fancyRpartPlot(modFitClass)
+```
+
+##### Random forest results:
+```{r}
+modFitRF
+```
+
+##### Boosted method results:
+```{r}
+modFitGBM
+```
+
+The accuracy was highest when using the random forest methodology.
+
+#### Predicting with models:
+Here we predict the results of the `newTest` dataframe and verify the accuracy of each prediction.
+```{r}
+predClass <- predict(modFitClass, newTest, type=c("class"))
+predRF <- predict(modFitRF, newTest)
+predGBM <- predict(modFitGBM, newTest)
+```
+
+Our initial observtion still holds when the same models are applied to the test set as seen below:
+```{r}
+confusionMatrix(predClass,newTest$classe)$overall[1]
+confusionMatrix(predRF,newTest$classe)$overall[1]
+confusionMatrix(predGBM,newTest$classe)$overall[1]
+```
+
+#### Out-of-sample error:
+The out-of-sample error (i.e. the error rate on a new data set) in the three models are as follows:  
+Decision Tree: `r 1 - confusionMatrix(predClass,newTest$classe)$overall[[1]]`  
+Random Forest: `r 1 - confusionMatrix(predRF,newTest$classe)$overall[[1]]`  
+Boosting: `r 1 - confusionMatrix(predGBM,newTest$classe)$overall[[1]]`  
+
+#### Final predictions of 20 sample cases:
+We now shift our focus to applying the three models to the 20 sample cases. As expected, the results from our decision tree model differs from the other two models, whose results are 100% in agreement. I used predictions from the latter two models (RF and GBM) to provide my answers for the final prediction quiz.
+```{r}
+predTestingClass <- predict(modFitClass, testingComponent, type=c("class"))
+predTestingRF <- predict(modFitRF, testingComponent)
+predTestingGBM <- predict(modFitGBM, testingComponent)
+```
+
+Decision Tree: `r data.frame(predTestingClass)$predTestingClass`  
+Random Forest: `r predTestingRF`  
+GBM: `r predTestingGBM`  
